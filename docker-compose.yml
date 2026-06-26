@@ -1,0 +1,74 @@
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rpai_postgres
+    environment:
+      POSTGRES_USER: rpai
+      POSTGRES_PASSWORD: rpai
+      POSTGRES_DB: rpai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - rpai_default
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rpai_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 10g
+    networks:
+      - rpai_default
+
+  backend:
+    build: ./backend
+    container_name: rpai_backend
+    environment:
+      DATABASE_URL: postgresql://rpai:rpai@postgres:5432/rpai
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      - postgres
+      - ollama
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rpai.rule=Host(`${RPAI_DOMAIN}`)"
+      - "traefik.http.routers.rpai.entrypoints=websecure"
+      - "traefik.http.routers.rpai.tls.certresolver=le"
+      - "traefik.http.services.rpai.loadbalancer.server.port=3000"
+    networks:
+      - traefik
+      - rpai_default
+
+  k6:
+    image: grafana/k6:latest
+    container_name: rpai_k6
+    volumes:
+      - ./k6:/scripts
+    entrypoint: ["k6", "run", "/scripts/test.js"]
+    depends_on:
+      - backend
+    networks:
+      - rpai_default
+
+volumes:
+  pgdata:
+  ollama:
+
+networks:
+  traefik:
+    external: true
+  rpai_default:
+    driver: bridge
